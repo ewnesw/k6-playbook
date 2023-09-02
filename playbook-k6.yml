@@ -1,0 +1,112 @@
+- name: k6
+  hosts: localhost
+  tasks:
+    - name: Create a k8s namespace
+      kubernetes.core.k8s:
+        name: k6
+        api_version: v1
+        kind: Namespace
+        state: present
+
+    - name: Delete configFile
+      kubernetes.core.k8s:
+        state: absent
+        namespace: k6
+        definition:
+          apiVersion: k6.io/v1alpha1
+          kind: K6
+          metadata:
+            name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}"
+      loop: "{{ test_file }}"
+
+    - name: Delete configFile
+      kubernetes.core.k8s:
+        state: absent
+        namespace: k6
+        definition:
+          apiVersion: k6.io/v1alpha1
+          kind: K6
+          metadata:
+            name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}-smoke"
+      loop: "{{ test_file }}"
+
+    - name: Delete configmaps
+      kubernetes.core.k8s:
+        state: absent
+        namespace: k6
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}"
+      loop: "{{ test_file }}"
+
+    - name: Create configmaps
+      kubernetes.core.k8s:
+        state: present
+        namespace: k6
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}"
+          data:
+            script: "{{ lookup('file' , item) }}"
+      loop: "{{ test_file }}"
+
+    - name: Create test smoke
+      kubernetes.core.k8s:
+        state: present
+        namespace: k6
+        definition:
+          apiVersion: k6.io/v1alpha1
+          kind: K6
+          metadata:
+            name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}-smoke"
+          spec:
+            parallelism: "{{ jobs }}"
+            script:
+              configMap:
+                name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}"
+                file: script
+            arguments: -o output-prometheus-remote -i 1 -u 1
+            runner:
+              image: "{{ docker_image }}"
+              env:
+                - name: K6_PROMETHEUS_REMOTE_URL
+                  value: "{{ prometheus_url | default('http://prometheus-server.default.svc.cluster.local/api/v1/write') }}"
+      loop: "{{ test_file }}"
+
+    - name: wait test smoke
+      kubernetes.core.k8s_info:
+        name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}-smoke-1"
+        kind: Job
+        namespace: k6
+        wait: yes
+        wait_condition:
+          type: Complete
+          status: "True"
+      loop: "{{ test_file }}"
+
+    - name: Create test
+      kubernetes.core.k8s:
+        state: present
+        namespace: k6
+        definition:
+          apiVersion: k6.io/v1alpha1
+          kind: K6
+          metadata:
+            name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}"
+          spec:
+            parallelism: "{{ jobs }}"
+            script:
+              configMap:
+                name: "{{ item | regex_search('[a-zA-Z]*(?=\\.)') | trim }}"
+                file: script
+            arguments: -o output-prometheus-remote
+            runner:
+              image: "{{ docker_image }}"
+              env:
+                - name: K6_PROMETHEUS_REMOTE_URL
+                  value: "{{ prometheus_url | default('http://prometheus-server.default.svc.cluster.local/api/v1/write') }}"
+      loop: "{{ test_file }}"

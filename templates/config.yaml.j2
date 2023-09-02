@@ -1,0 +1,16 @@
+apiVersion: k6.io/v1alpha1
+kind: K6
+metadata:
+  name: {{ k6_script }}
+spec:
+  parallelism: {{ jobs }}
+  script:
+    configMap:
+      name: {{ k6_script }}
+      file: {{ k6_script }}
+  arguments: -o output-prometheus-remote
+  runner:
+    image: {{ docker_image }}
+    env:
+      - name: K6_PROMETHEUS_REMOTE_URL
+        value: {{ prometheus_url | default('http://prometheus-server.default.svc.cluster.local/api/v1/write') }}
